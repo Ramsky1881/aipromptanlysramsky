@@ -1,0 +1,332 @@
+import React, { useState, useRef } from 'react';
+
+// Main App component
+const App = () => {
+    // State to store the selected image file
+    const [selectedImage, setSelectedImage] = useState(null);
+    // State to store the base64 encoded image data
+    const [base64Image, setBase64Image] = useState('');
+    // State to store the generated prompt in Indonesian
+    const [generatedIndonesianPrompt, setGeneratedIndonesianPrompt] = useState('');
+    // State to store the generated positive prompt in English
+    const [generatedEnglishPositivePrompt, setGeneratedEnglishPositivePrompt] = useState('');
+    // State to store the generated negative prompt in English
+    const [generatedEnglishNegativePrompt, setGeneratedEnglishNegativePrompt] = useState('');
+    // State to manage loading status during API call
+    const [isLoading, setIsLoading] = useState(false);
+    // State to store any error messages
+    const [error, setError] = useState('');
+    // State for copy button feedback for positive prompt
+    const [copyPositiveFeedback, setCopyPositiveFeedback] = useState('');
+    // State for copy button feedback for negative prompt
+    const [copyNegativeFeedback, setCopyNegativeFeedback] = useState('');
+
+    // Reference to the hidden file input element
+    const fileInputRef = useRef(null);
+
+    // Function to handle image file selection
+    const handleImageChange = (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            setSelectedImage(file);
+            setError(''); // Clear any previous errors
+            setGeneratedIndonesianPrompt(''); // Clear previous prompts
+            setGeneratedEnglishPositivePrompt('');
+            setGeneratedEnglishNegativePrompt('');
+
+            // Read the file as a Data URL (base64)
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                // Set the base64 image data, removing the MIME type prefix
+                setBase64Image(reader.result.split(',')[1]);
+            };
+            reader.onerror = () => {
+                setError('Gagal membaca file gambar.');
+            };
+            reader.readAsDataURL(file);
+        } else {
+            setSelectedImage(null);
+            setBase64Image('');
+            setGeneratedIndonesianPrompt('');
+            setGeneratedEnglishPositivePrompt('');
+            setGeneratedEnglishNegativePrompt('');
+        }
+    };
+
+    // Function to trigger the file input click
+    const triggerFileInput = () => {
+        fileInputRef.current.click();
+    };
+
+    // Function to copy text to clipboard
+    const copyToClipboard = (text, setFeedback) => {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed'; // Avoid scrolling to bottom
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            setFeedback('Tersalin!');
+        } catch (err) {
+            setFeedback('Gagal menyalin.');
+            console.error('Failed to copy text: ', err);
+        }
+        document.body.removeChild(textarea);
+        setTimeout(() => setFeedback(''), 2000); // Clear feedback after 2 seconds
+    };
+
+    // Function to send the image to the Gemini API for prompt generation
+    const analyzeImage = async () => {
+        if (!base64Image) {
+            setError('Silakan unggah gambar terlebih dahulu.');
+            return;
+        }
+
+        setIsLoading(true);
+        setGeneratedIndonesianPrompt(''); // Clear previous prompts
+        setGeneratedEnglishPositivePrompt('');
+        setGeneratedEnglishNegativePrompt('');
+        setError(''); // Clear previous errors
+
+        try {
+            // Updated prompt to specifically request a detailed ComfyUI-style prompt
+            // and to provide output in both Indonesian and English, with clear headings for parsing,
+            // separating English into Positive and Negative prompts.
+            const userPromptText = `Buat prompt yang sangat detail dan terstruktur untuk generator gambar seperti ComfyUI, berdasarkan gambar ini. Sertakan deskripsi objek utama, latar belakang, suasana, gaya artistik (misalnya, fotografi, ilustrasi 3D, lukisan cat air), pencahayaan (misalnya, pencahayaan lembut, dramatis, cahaya matahari), komposisi (misalnya, close-up, wide shot), dan kata kunci kualitas gambar (misalnya, kualitas tinggi, hyperrealistic, 4K, detail rumit).\n\nUntuk prompt bahasa Inggris, pisahkan menjadi Positive Prompt dan Negative Prompt.\n\nBerikan respons Anda dalam format berikut:\n\n### Prompt Bahasa Indonesia:\n[Isi prompt dalam Bahasa Indonesia]\n\n### English Positive Prompt:\n[Isi positive prompt dalam Bahasa Inggris]\n\n### English Negative Prompt:\n[Isi negative prompt dalam Bahasa Inggris]`;
+
+
+            const chatHistory = [];
+            chatHistory.push({ role: "user", parts: [{ text: userPromptText }] });
+
+            const payload = {
+                contents: [
+                    {
+                        role: "user",
+                        parts: [
+                            { text: userPromptText }, // Initial prompt with detailed instruction for image generation
+                            {
+                                inlineData: {
+                                    mimeType: selectedImage.type, // Use the actual MIME type of the uploaded image
+                                    data: base64Image
+                                }
+                            }
+                        ]
+                    }
+                ],
+            };
+
+            // Gemini API Key added here
+            const apiKey = "AIzaSyCeC4RzS5_GETZO0Ql8tJehZtV-rREnrpI";
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            // Make the fetch call to the Gemini API
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error?.message || `API error: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+
+            // Check if the response contains valid content
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+                const fullText = result.candidates[0].content.parts[0].text;
+
+                // Parse the full text into Indonesian, English Positive, and English Negative parts
+                const indonesianMatch = fullText.match(/### Prompt Bahasa Indonesia:\n([\s\S]*?)(?=\n### English Positive Prompt:|$)/);
+                const englishPositiveMatch = fullText.match(/### English Positive Prompt:\n([\s\S]*?)(?=\n### English Negative Prompt:|$)/);
+                const englishNegativeMatch = fullText.match(/### English Negative Prompt:\n([\s\S]*)/);
+
+                setGeneratedIndonesianPrompt(indonesianMatch ? indonesianMatch[1].trim() : 'Prompt Bahasa Indonesia tidak ditemukan.');
+                setGeneratedEnglishPositivePrompt(englishPositiveMatch ? englishPositiveMatch[1].trim() : 'English Positive Prompt not found.');
+                setGeneratedEnglishNegativePrompt(englishNegativeMatch ? englishNegativeMatch[1].trim() : 'English Negative Prompt not found.');
+
+            } else {
+                setError('Tidak dapat menghasilkan prompt. Struktur respons tidak terduga.');
+            }
+        } catch (err) {
+            console.error('Error analyzing image:', err);
+            setError(`Gagal menganalisis gambar: ${err.message}`);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    return (
+        <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4 font-sans">
+            <style>
+                {`
+                @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+                body {
+                    font-family: 'Inter', sans-serif;
+                }
+                .text-inter {
+                    font-family: 'Inter', sans-serif;
+                }
+                `}
+            </style>
+            <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-2xl border border-gray-200">
+                <h1 className="text-3xl font-bold text-center text-gray-800 mb-6 text-inter">
+                    AI Prompt Analyzer
+                </h1>
+                <p className="text-center text-gray-600 mb-8 text-inter">
+                    Unggah gambar Anda untuk mendapatkan deskripsi AI secara otomatis.
+                </p>
+
+                {/* Image Upload Section */}
+                <div className="flex flex-col items-center mb-8">
+                    <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleImageChange}
+                        ref={fileInputRef}
+                        className="hidden"
+                    />
+                    <button
+                        onClick={triggerFileInput}
+                        className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md transition duration-300 ease-in-out transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 text-inter"
+                    >
+                        {selectedImage ? 'Ubah Gambar' : 'Unggah Gambar'}
+                    </button>
+                    {selectedImage && (
+                        <p className="mt-3 text-sm text-gray-700 text-inter">
+                            File terpilih: <span className="font-medium">{selectedImage.name}</span>
+                        </p>
+                    )}
+                </div>
+
+                {/* Display Selected Image */}
+                {base64Image && (
+                    <div className="mb-8 p-4 border border-gray-300 rounded-lg bg-gray-50 flex justify-center">
+                        <img
+                            src={`data:${selectedImage?.type};base64,${base64Image}`}
+                            alt="Pratinjau Gambar"
+                            className="max-w-full h-auto rounded-lg shadow-md max-h-80 object-contain"
+                        />
+                    </div>
+                )}
+
+                {/* Analyze Button */}
+                <div className="text-center mb-8">
+                    <button
+                        onClick={analyzeImage}
+                        disabled={isLoading || !base64Image}
+                        className={`py-3 px-8 rounded-lg font-semibold text-white shadow-lg transition duration-300 ease-in-out transform ${
+                            isLoading || !base64Image
+                                ? 'bg-gray-400 cursor-not-allowed'
+                                : 'bg-green-600 hover:bg-green-700 hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-75'
+                        } text-inter`}
+                    >
+                        {isLoading ? (
+                            <span className="flex items-center">
+                                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                Menganalisis...
+                            </span>
+                        ) : (
+                            'Analisis Gambar'
+                        )}
+                    </button>
+                </div>
+
+                {/* Error Message Display */}
+                {error && (
+                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative mb-8 text-inter" role="alert">
+                        <strong className="font-bold">Error:</strong>
+                        <span className="block sm:inline"> {error}</span>
+                    </div>
+                )}
+
+                {/* Generated Prompt Display (Indonesian) */}
+                {generatedIndonesianPrompt && (
+                    <div className="bg-blue-50 border border-blue-200 text-blue-800 p-6 rounded-xl shadow-inner mb-6 text-inter">
+                        <h2 className="text-xl font-semibold mb-3 text-inter">Prompt Bahasa Indonesia:</h2>
+                        <p className="text-lg leading-relaxed text-inter whitespace-pre-wrap">
+                            {generatedIndonesianPrompt}
+                        </p>
+                    </div>
+                )}
+
+                {/* Generated English Prompts (Positive & Negative) */}
+                {(generatedEnglishPositivePrompt || generatedEnglishNegativePrompt) && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* English Positive Prompt */}
+                        {generatedEnglishPositivePrompt && (
+                            <div className="bg-blue-50 border border-blue-200 text-blue-800 p-6 rounded-xl shadow-inner text-inter">
+                                <h2 className="text-xl font-semibold mb-3 text-inter flex items-center justify-between">
+                                    <span>English Positive Prompt:</span>
+                                    <div className="relative">
+                                        <button
+                                            onClick={() => copyToClipboard(generatedEnglishPositivePrompt, setCopyPositiveFeedback)}
+                                            className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-1 px-3 rounded-md text-sm transition duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-opacity-75"
+                                        >
+                                            Salin
+                                        </button>
+                                        {copyPositiveFeedback && (
+                                            <span className="absolute -top-6 left-1/2 -translate-x-1/2 bg-gray-700 text-white text-xs py-1 px-2 rounded opacity-0 animate-fade-in-out">
+                                                {copyPositiveFeedback}
+                                            </span>
+                                        )}
+                                    </div>
+                                </h2>
+                                <div className="text-lg leading-relaxed text-inter bg-white p-4 rounded-md border border-gray-300 select-all cursor-text overflow-x-auto">
+                                    {generatedEnglishPositivePrompt}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* English Negative Prompt */}
+                        {generatedEnglishNegativePrompt && (
+                            <div className="bg-blue-50 border border-blue-200 text-blue-800 p-6 rounded-xl shadow-inner text-inter">
+                                <h2 className="text-xl font-semibold mb-3 text-inter flex items-center justify-between">
+                                    <span>English Negative Prompt:</span>
+                                    <div className="relative">
+                                        <button
+                                            onClick={() => copyToClipboard(generatedEnglishNegativePrompt, setCopyNegativeFeedback)}
+                                            className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-semibold py-1 px-3 rounded-md text-sm transition duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-gray-400 focus:ring-opacity-75"
+                                        >
+                                            Salin
+                                        </button>
+                                        {copyNegativeFeedback && (
+                                            <span className="absolute -top-6 left-1/2 -translate-x-1/2 bg-gray-700 text-white text-xs py-1 px-2 rounded opacity-0 animate-fade-in-out">
+                                                {copyNegativeFeedback}
+                                            </span>
+                                        )}
+                                    </div>
+                                </h2>
+                                <div className="text-lg leading-relaxed text-inter bg-white p-4 rounded-md border border-gray-300 select-all cursor-text overflow-x-auto">
+                                    {generatedEnglishNegativePrompt}
+                                </div>
+                            </div>
+                        )}
+                        <style>{`
+                            @keyframes fade-in-out {
+                                0% { opacity: 0; transform: translateY(5px); }
+                                20% { opacity: 1; transform: translateY(0); }
+                                80% { opacity: 1; transform: translateY(0); }
+                                100% { opacity: 0; transform: translateY(-5px); }
+                            }
+                            .animate-fade-in-out {
+                                animation: fade-in-out 2s forwards;
+                            }
+                        `}</style>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+export default App;
