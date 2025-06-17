@@ -33,6 +33,7 @@ const App = () => {
             setGeneratedIndonesianPrompt(''); // Clear previous prompts
             setGeneratedEnglishPositivePrompt('');
             setGeneratedEnglishNegativePrompt('');
+            setBase64Image(''); // Clear previous image data before loading new one
 
             // Read the file as a Data URL (base64)
             const reader = new FileReader();
@@ -118,7 +119,7 @@ const App = () => {
                 ],
             };
 
-            // Gemini API Key added here
+            // Gemini API Key
             const apiKey = "AIzaSyCeC4RzS5_GETZO0Ql8tJehZtV-rREnrpI";
             const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
 
